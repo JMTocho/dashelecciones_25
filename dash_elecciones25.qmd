@@ -1,0 +1,792 @@
+---
+title: "Elecciones 25 oct"
+format: dashboard
+orientation: rows
+logo: argentina_bandera.avif
+theme: flatly
+css: estilo.css
+---
+
+```{r}
+library(dplyr)
+library(mapgl)
+library(reactable)
+library(reactablefmtr)
+library(htmltools)
+library(scales)
+
+
+load("data/ganadores_mun.RData")
+load("data/ganadores_prov.RData")
+load("data/tablas_mun.RData")
+load("data/tablas_prov.RData")
+load("data/provincias_shp.RData")
+load("data/departamentos_cen.RData")
+
+provincias_sen <- provincias |>
+  subset(Provincia %in% c("TIERRA DEL FUEGO",
+                          "RIO NEGRO",
+                          "CABA",
+                          "NEUQUEN",
+                          "ENTRE RIOS",
+                          "SANTIAGO DEL ESTERO",
+                          "SALTA","CHACO"))
+
+departamentos_sen <- departamentos_cen |>
+  subset(
+    grepl("TIERRA DEL FUEGO|RIO NEGRO|NEUQUEN|ENTRE RIOS|SANTIAGO DEL ESTERO|SALTA|CHACO|CABA",
+          id_d, ignore.case = TRUE)
+  )
+
+# Función para la paleta de color (Verde: más votos, más intenso)
+get_pct_color <- function(pct) {
+  color_pal <- function(x) rgb(colorRamp(c("#43a047", "#43a047"))(x), maxColorValue = 255)
+  min_pct <- min(pct)
+  max_pct <- max(pct)
+  normalized <- (pct - min_pct) / (max_pct - min_pct)
+  return(color_pal(normalized))
+}
+
+# 1. Calcular el máximo de Votos (y su raíz cuadrada) por Provincia
+prov_max <- prov_dip %>%
+  group_by(Provincia) %>%
+  summarise(
+    max_votos_provincial_sqrt = max(sqrt(Votos)),
+    .groups = 'drop'
+  )
+
+# 2. Unir columnas auxiliares
+prov_dip <- prov_dip %>%
+  left_join(prov_max, by = "Provincia") %>%
+  mutate(pct_color = get_pct_color(Porcentaje)) # Agregar la columna de color para Porcentaje
+
+
+# 1. Calcular el máximo de Votos (y su raíz cuadrada) por Provincia
+mun_max <- mun_dip %>%
+  group_by(id_d) %>%
+  summarise(
+    max_votos_municipio_sqrt = max(sqrt(Votos)),
+    .groups = 'drop'
+  )
+
+# 2. Unir columnas auxiliares
+mun_dip <- mun_dip %>%
+  left_join(mun_max, by = "id_d") %>%
+  mutate(pct_color = get_pct_color(Porcentaje)) # Agregar la columna de color para Porcentaje
+```
+
+
+
+# Provincias 
+
+## {.tabset}
+
+### Diputados
+
+::: {.card expandable=false width=35%}
+```{r}
+maplibre(bounds = ganadores_dip_prov,
+         zoom = 5) |>
+  add_navigation_control(
+    show_compass = TRUE,
+    show_zoom = TRUE,
+    visualize_pitch = FALSE,
+    position = "top-left")|>
+  add_fill_layer(id = "Diputados_prov",
+                 source = ganadores_dip_prov,
+                 fill_color = get_column("Paleta"),
+                 fill_opacity = 0.7,
+                 fill_outline_color = "black",
+                 tooltip = "popup",
+                 hover_options = list(
+                   fill_color = "gold",
+                   fill_opacity = 1
+                 )
+                 )
+```
+:::
+
+::: {.card expandable=false}
+```{r}
+reactable(
+  prov_dip,
+  groupBy = "Provincia",
+  defaultSorted = "Votos",
+  defaultColDef = colDef(
+    align = "center",
+    defaultSortOrder = "desc",
+    headerClass = "header"
+  ),
+  columns = list(
+    Provincia = colDef(name = "Provincia"),
+    Agrupación = colDef(name = "Agrupación"),
+    Bancas = colDef(
+      name = "Bancas",
+      align = "center",
+      aggregate = "sum",
+      cell = function(value) {
+        if (is.na(value) || value < 1) {
+          htmltools::tags$span(
+            list(
+              htmltools::tags$span("\u274C", style = "color: #d32f2f; font-size: 1.1rem;
+                                   margin-right: 5px;"),
+          htmltools::tags$span(value)
+          )
+          )
+          } else {
+            htmltools::tags$span(
+              list(
+                htmltools::tags$span("\u2705", style = "color: #388e3c; font-size: 1.1rem;
+                                     margin-right: 5px;"),
+                htmltools::tags$span(value)
+                )
+            )
+            }
+        },
+      html = TRUE
+      ),
+    Votos = colDef(
+      name = "Votos",
+      defaultSortOrder = "desc",
+      align = "center",
+      cell = function(value, index) {
+        # Escalamos por provincia
+        max_votos <- prov_dip$max_votos_provincial_sqrt[index]
+        width_pct <- (sqrt(value) / max_votos) * 100
+        
+        value_fmt <- format(value, big.mark = ",")
+        
+        div(
+          style = list(
+            display = "flex",
+            flexDirection = "column",
+            alignItems = "center",
+            justifyContent = "center",
+            width = "100%",
+            padding = "4px 0"
+          ),
+          # Valor numérico arriba
+          span(
+            value_fmt,
+            style = "font-weight: bold; margin-bottom: 5px; font-size: 0.9rem;"
+          ),
+          # Contenedor de barra completa
+          div(
+            style = list(
+              width = "100%",
+              height = "20px",
+              backgroundColor = "#f0f0f0",
+              borderRadius = "4px",
+              overflow = "hidden"
+            ),
+            # Barra proporcional coloreada
+            div(
+              style = list(
+                width = paste0(width_pct, "%"),
+                height = "100%",
+                backgroundColor = "#43a047",
+                transition = "width 0.6s ease"
+              )
+            )
+          )
+        )
+      }
+    ),
+    
+    Porcentaje = colDef(
+      name = "Porcentaje",
+      cell = function(value, index) {
+        color <- prov_dip$pct_color[index]
+        pct_value <- paste0(round(value, 1), "%")
+        
+        tags$div(
+          style = list(
+            display = "flex",
+            alignItems = "center",
+            justifyContent = "center"
+          ),
+          tags$div(
+            style = list(
+              background = paste0("conic-gradient(", color, " ", value, "%, #e1e1e1 ", value, "%)"),
+              borderRadius = "50%",
+              width = "35px",
+              height = "35px",
+              display = "flex",
+              alignItems = "center",
+              justifyContent = "center",
+              marginRight = "8px",
+              boxShadow = "0 0 0 2px #e1e1e1 inset"
+            ),
+            tags$div(
+              style = list(
+                backgroundColor = "white",
+                borderRadius = "50%",
+                width = "25px",
+                height = "25px"
+              )
+            )
+          ),
+          tags$span(pct_value, style = "font-weight: bold;")
+        )
+      },
+      html = TRUE,
+      width = 150
+    ),
+    pct_color = colDef(show = FALSE),
+    max_votos_provincial_sqrt = colDef(show = FALSE)
+  ),
+  bordered = TRUE,
+  striped = TRUE,
+  highlight = TRUE,
+  compact = TRUE,
+  theme = reactableTheme(
+    borderColor = "#dfe2e5",
+    stripedColor = "#f6f8fa",
+    highlightColor = "#f0f5f9",
+    cellPadding = "8px 12px",
+    style = list(
+      fontFamily = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    ),
+    searchInputStyle = list(width = "100%")
+  ),
+  
+  # 🔹 Opciones de estilo
+  defaultPageSize = 24
+)
+```
+:::
+
+### Senadores
+
+::: {.card expandable=false width=35%}
+```{r}
+#| layout-ncol: 2
+
+maplibre(bounds = ganadores_sen_prov,
+         zoom = 5) |>
+  add_navigation_control(
+    show_compass = TRUE,
+    show_zoom = TRUE,
+    visualize_pitch = FALSE,
+    position = "top-left")|>
+  add_fill_layer(id = "Diputados_prov",
+                 source = ganadores_sen_prov,
+                 fill_color = get_column("Paleta"),
+                 fill_opacity = 0.7,
+                 fill_outline_color = "black",
+                 tooltip = "popup",
+                 hover_options = list(
+                   fill_color = "gold",
+                   fill_opacity = 1
+                 )
+  )
+```
+:::
+
+
+::: {.card expandable=false}
+```{r}
+reactable(
+  prov_sen,
+  groupBy = "Provincia",
+  defaultSorted = "Votos",
+  defaultColDef = colDef(
+    align = "center",
+    defaultSortOrder = "desc",
+    headerClass = "header"
+  ),
+  columns = list(
+    Provincia = colDef(name = "Provincia"),
+    Agrupación = colDef(name = "Agrupación"),
+    Bancas = colDef(
+      name = "Bancas",
+      align = "center",
+      aggregate = "sum",
+      cell = function(value) {
+        if (is.na(value) || value < 1) {
+          htmltools::tags$span(
+            list(
+              htmltools::tags$span("\u274C", style = "color: #d32f2f; font-size: 1.1rem;
+                                   margin-right: 5px;"),
+          htmltools::tags$span(value)
+          )
+          )
+          } else {
+            htmltools::tags$span(
+              list(
+                htmltools::tags$span("\u2705", style = "color: #388e3c; font-size: 1.1rem;
+                                     margin-right: 5px;"),
+                htmltools::tags$span(value)
+                )
+            )
+            }
+        },
+      html = TRUE
+      ),
+    Votos = colDef(
+      name = "Votos",
+      defaultSortOrder = "desc",
+      align = "center",
+      cell = function(value, index) {
+        # Escalamos por provincia
+        max_votos <- prov_dip$max_votos_provincial_sqrt[index]
+        width_pct <- (sqrt(value) / max_votos) * 100
+        
+        value_fmt <- format(value, big.mark = ",")
+        
+        div(
+          style = list(
+            display = "flex",
+            flexDirection = "column",
+            alignItems = "center",
+            justifyContent = "center",
+            width = "100%",
+            padding = "4px 0"
+          ),
+          # Valor numérico arriba
+          span(
+            value_fmt,
+            style = "font-weight: bold; margin-bottom: 5px; font-size: 0.9rem;"
+          ),
+          # Contenedor de barra completa
+          div(
+            style = list(
+              width = "100%",
+              height = "20px",
+              backgroundColor = "#f0f0f0",
+              borderRadius = "4px",
+              overflow = "hidden"
+            ),
+            # Barra proporcional coloreada
+            div(
+              style = list(
+                width = paste0(width_pct, "%"),
+                height = "100%",
+                backgroundColor = "#43a047",
+                transition = "width 0.6s ease"
+              )
+            )
+          )
+        )
+      }
+    ),
+    
+    Porcentaje = colDef(
+      name = "Porcentaje",
+      cell = function(value, index) {
+        color <- prov_dip$pct_color[index]
+        pct_value <- paste0(round(value, 1), "%")
+        
+        tags$div(
+          style = list(
+            display = "flex",
+            alignItems = "center",
+            justifyContent = "center"
+          ),
+          tags$div(
+            style = list(
+              background = paste0("conic-gradient(", color, " ", value, "%, #e1e1e1 ", value, "%)"),
+              borderRadius = "50%",
+              width = "35px",
+              height = "35px",
+              display = "flex",
+              alignItems = "center",
+              justifyContent = "center",
+              marginRight = "8px",
+              boxShadow = "0 0 0 2px #e1e1e1 inset"
+            ),
+            tags$div(
+              style = list(
+                backgroundColor = "white",
+                borderRadius = "50%",
+                width = "25px",
+                height = "25px"
+              )
+            )
+          ),
+          tags$span(pct_value, style = "font-weight: bold;")
+        )
+      },
+      html = TRUE,
+      width = 150
+    ),
+    pct_color = colDef(show = FALSE),
+    max_votos_provincial_sqrt = colDef(show = FALSE)
+  ),
+  bordered = TRUE,
+  striped = TRUE,
+  highlight = TRUE,
+  compact = TRUE,
+  theme = reactableTheme(
+    borderColor = "#dfe2e5",
+    stripedColor = "#f6f8fa",
+    highlightColor = "#f0f5f9",
+    cellPadding = "8px 12px",
+    style = list(
+      fontFamily = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    ),
+    searchInputStyle = list(width = "100%")
+  ),
+  
+  # 🔹 Opciones de estilo
+  defaultPageSize = 24
+)
+```
+:::
+
+
+
+
+# Territorios
+
+
+## {.tabset}
+
+### Diputados
+
+::: {.card expandable=false width=35%}
+```{r}
+maplibre(bounds = ganadores_dip_mun,
+         zoom = 5) |>
+  add_navigation_control(
+    show_compass = TRUE,
+    show_zoom = TRUE,
+    visualize_pitch = FALSE,
+    position = "top-left")|>
+  add_fill_layer(id = "Diputados_mun",
+                 source = ganadores_dip_mun,
+                 fill_color = get_column("Paleta"),
+                 fill_opacity = 0.7,
+                 fill_outline_color = "#555555",
+                 tooltip = "popup",
+                 hover_options = list(
+                   fill_color = "gold",
+                   fill_opacity = 1
+                 )
+                 )|>
+  add_line_layer(id = "prov_lineas_dip",
+                 source = provincias,
+                 line_color = "black",
+    line_width = 1.5,
+    line_dasharray = c(3, 2),
+    line_opacity = 0.8,
+    line_join = "round",
+    line_cap = "round",
+    tooltip = "Provincia")|>
+  add_symbol_layer(id = "dip_label",
+                   source = departamentos_cen,
+                   text_field = get_column("nomdepto_censo"),
+                   text_size = 11,
+                   text_color = "black",
+                   text_halo_color = "black",
+                   text_halo_width = 1,
+                   text_ignore_placement = FALSE,
+                   text_anchor = "center",
+                   min_zoom = 5
+      )
+
+```
+:::
+
+
+
+::: {.card expandable=false}
+```{r}
+reactable(
+  mun_dip,
+  groupBy = c("Provincia","Municipio"),
+  defaultSorted = "Votos",
+  defaultColDef = colDef(
+    align = "center",
+    defaultSortOrder = "desc",
+    headerClass = "header"
+  ),
+  columns = list(
+    id_d = colDef(show = FALSE),
+    Provincia = colDef(name = "Provincia"),
+    Municipio = colDef(name = "Territorio",filterable = TRUE),
+    Agrupación = colDef(name = "Agrupación"),
+    Votos = colDef(
+      name = "Votos",
+      defaultSortOrder = "desc",
+      align = "center",
+      cell = function(value, index) {
+        # Escalamos por provincia
+        max_votos <- mun_dip$max_votos_municipio_sqrt[index]
+        width_pct <- (sqrt(value) / max_votos) * 100
+        
+        value_fmt <- format(value, big.mark = ",")
+        
+        div(
+          style = list(
+            display = "flex",
+            flexDirection = "column",
+            alignItems = "center",
+            justifyContent = "center",
+            width = "100%",
+            padding = "4px 0"
+          ),
+          # Valor numérico arriba
+          span(
+            value_fmt,
+            style = "font-weight: bold; margin-bottom: 5px; font-size: 0.9rem;"
+          ),
+          # Contenedor de barra completa
+          div(
+            style = list(
+              width = "100%",
+              height = "20px",
+              backgroundColor = "#f0f0f0",
+              borderRadius = "4px",
+              overflow = "hidden"
+            ),
+            # Barra proporcional coloreada
+            div(
+              style = list(
+                width = paste0(width_pct, "%"),
+                height = "100%",
+                backgroundColor = "#43a047",
+                transition = "width 0.6s ease"
+              )
+            )
+          )
+        )
+      }
+    ),
+    
+    Porcentaje = colDef(
+      name = "Porcentaje",
+      cell = function(value, index) {
+        color <- mun_dip$pct_color[index]
+        pct_value <- paste0(round(value, 1), "%")
+        
+        tags$div(
+          style = list(
+            display = "flex",
+            alignItems = "center",
+            justifyContent = "center"
+          ),
+          tags$div(
+            style = list(
+              background = paste0("conic-gradient(", color, " ", value, "%, #e1e1e1 ", value, "%)"),
+              borderRadius = "50%",
+              width = "35px",
+              height = "35px",
+              display = "flex",
+              alignItems = "center",
+              justifyContent = "center",
+              marginRight = "8px",
+              boxShadow = "0 0 0 2px #e1e1e1 inset"
+            ),
+            tags$div(
+              style = list(
+                backgroundColor = "white",
+                borderRadius = "50%",
+                width = "25px",
+                height = "25px"
+              )
+            )
+          ),
+          tags$span(pct_value, style = "font-weight: bold;")
+        )
+      },
+      html = TRUE,
+      width = 150
+    ),
+    pct_color = colDef(show = FALSE),
+    max_votos_municipio_sqrt = colDef(show = FALSE)
+  ),
+  bordered = TRUE,
+  striped = TRUE,
+  highlight = TRUE,
+  compact = TRUE,
+  theme = reactableTheme(
+    borderColor = "#dfe2e5",
+    stripedColor = "#f6f8fa",
+    highlightColor = "#f0f5f9",
+    cellPadding = "8px 12px",
+    style = list(
+      fontFamily = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    ),
+    searchInputStyle = list(width = "100%")
+  ),
+  
+  # 🔹 Opciones de estilo
+  defaultPageSize = 24
+)
+```
+:::
+
+
+### Senadores
+
+::: {.card expandable=false width=35%}
+```{r}
+maplibre(bounds = ganadores_sen_mun,
+         zoom = 5) |>
+  add_navigation_control(
+    show_compass = TRUE,
+    show_zoom = TRUE,
+    visualize_pitch = FALSE,
+    position = "top-left")|>
+  add_fill_layer(id = "Senadores_mun",
+                 source = ganadores_sen_mun,
+                 fill_color = get_column("Paleta"),
+                 fill_opacity = 0.7,
+                 fill_outline_color = "#555555",
+                 tooltip = "popup",
+                 hover_options = list(
+                   fill_color = "gold",
+                   fill_opacity = 1
+                 )
+                 )|>
+  add_line_layer(id = "prov_lineas_sen",
+                 source = provincias_sen,
+                 line_color = "black",
+    line_width = 1.5,
+    line_dasharray = c(3, 2),
+    line_opacity = 0.8,
+    line_join = "round",
+    line_cap = "round",
+    tooltip = "Provincia")|>
+  add_symbol_layer(id = "sen_label",
+                   source = departamentos_sen,
+                   text_field = get_column("nomdepto_censo"),
+                   text_size = 11,
+                   text_color = "black",
+                   text_halo_color = "black",
+                   text_halo_width = 1,
+                   text_ignore_placement = FALSE,
+                   text_anchor = "center",
+                   min_zoom = 5
+      )
+```
+:::
+
+
+::: {.card expandable=false}
+```{r}
+reactable(
+  mun_sen,
+  groupBy = c("Provincia","Municipio"),
+  defaultSorted = "Votos",
+  defaultColDef = colDef(
+    align = "center",
+    defaultSortOrder = "desc",
+    headerClass = "header"
+  ),
+  columns = list(
+    id_d = colDef(show = FALSE),
+    Provincia = colDef(name = "Provincia"),
+    Municipio = colDef(name = "Territorio",filterable = TRUE),
+    Agrupación = colDef(name = "Agrupación"),
+    Votos = colDef(
+      name = "Votos",
+      defaultSortOrder = "desc",
+      align = "center",
+      cell = function(value, index) {
+        # Escalamos por provincia
+        max_votos <- mun_dip$max_votos_municipio_sqrt[index]
+        width_pct <- (sqrt(value) / max_votos) * 100
+        
+        value_fmt <- format(value, big.mark = ",")
+        
+        div(
+          style = list(
+            display = "flex",
+            flexDirection = "column",
+            alignItems = "center",
+            justifyContent = "center",
+            width = "100%",
+            padding = "4px 0"
+          ),
+          # Valor numérico arriba
+          span(
+            value_fmt,
+            style = "font-weight: bold; margin-bottom: 5px; font-size: 0.9rem;"
+          ),
+          # Contenedor de barra completa
+          div(
+            style = list(
+              width = "100%",
+              height = "20px",
+              backgroundColor = "#f0f0f0",
+              borderRadius = "4px",
+              overflow = "hidden"
+            ),
+            # Barra proporcional coloreada
+            div(
+              style = list(
+                width = paste0(width_pct, "%"),
+                height = "100%",
+                backgroundColor = "#43a047",
+                transition = "width 0.6s ease"
+              )
+            )
+          )
+        )
+      }
+    ),
+    
+    Porcentaje = colDef(
+      name = "Porcentaje",
+      cell = function(value, index) {
+        color <- mun_dip$pct_color[index]
+        pct_value <- paste0(round(value, 1), "%")
+        
+        tags$div(
+          style = list(
+            display = "flex",
+            alignItems = "center",
+            justifyContent = "center"
+          ),
+          tags$div(
+            style = list(
+              background = paste0("conic-gradient(", color, " ", value, "%, #e1e1e1 ", value, "%)"),
+              borderRadius = "50%",
+              width = "35px",
+              height = "35px",
+              display = "flex",
+              alignItems = "center",
+              justifyContent = "center",
+              marginRight = "8px",
+              boxShadow = "0 0 0 2px #e1e1e1 inset"
+            ),
+            tags$div(
+              style = list(
+                backgroundColor = "white",
+                borderRadius = "50%",
+                width = "25px",
+                height = "25px"
+              )
+            )
+          ),
+          tags$span(pct_value, style = "font-weight: bold;")
+        )
+      },
+      html = TRUE,
+      width = 150
+    ),
+    pct_color = colDef(show = FALSE),
+    max_votos_municipio_sqrt = colDef(show = FALSE)
+  ),
+  bordered = TRUE,
+  striped = TRUE,
+  highlight = TRUE,
+  compact = TRUE,
+  theme = reactableTheme(
+    borderColor = "#dfe2e5",
+    stripedColor = "#f6f8fa",
+    highlightColor = "#f0f5f9",
+    cellPadding = "8px 12px",
+    style = list(
+      fontFamily = "-apple-system, BlinkMacSystemFont, Segoe UI, Helvetica, Arial, sans-serif"
+    ),
+    searchInputStyle = list(width = "100%")
+  ),
+  
+  # 🔹 Opciones de estilo
+  defaultPageSize = 24
+)
+```
+:::
